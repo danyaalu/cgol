@@ -1,0 +1,2 @@
+/usr/bin/ar qc libcgol_core.a CMakeFiles/cgol_core.dir/src/state.cpp.o CMakeFiles/cgol_core.dir/src/engine.cpp.o CMakeFiles/cgol_core.dir/src/hash.cpp.o CMakeFiles/cgol_core.dir/src/normalize.cpp.o CMakeFiles/cgol_core.dir/src/runner.cpp.o
+/usr/bin/ranlib libcgol_core.a

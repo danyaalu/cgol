@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CGOL Program Designer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1>CGOL Program Designer</h1>
+            <p>Design your initial state and generate the CLI command.</p>
+        </header>
+
+        <section class="settings-panel">
+            <div class="input-group">
+                <label for="width">Width (W)</label>
+                <input type="number" id="width" min="1" max="64" value="10">
+            </div>
+            <div class="input-group">
+                <label for="height">Height (H)</label>
+                <input type="number" id="height" min="1" max="64" value="10">
+            </div>
+            <div class="input-group">
+                <label for="max-steps">Max Steps</label>
+                <input type="number" id="max-steps" min="1" max="10000000" value="1000">
+            </div>
+            <button id="apply-dims" class="btn primary">Resize Grid</button>
+        </section>
+
+        <section class="controls-panel">
+            <div class="tools">
+                <button id="clear-btn" class="btn secondary">Clear</button>
+                <button id="fill-btn" class="btn secondary">Fill</button>
+                <button id="invert-btn" class="btn secondary">Invert</button>
+                <div class="random-group">
+                    <button id="random-btn" class="btn secondary">Randomize</button>
+                    <input type="range" id="density" min="0" max="100" value="30" title="Density">
+                </div>
+            </div>
+            <div class="stats">
+                <span id="live-count">0</span> Live Cells / <span id="total-count">100</span> Total
+            </div>
+        </section>
+
+        <section class="grid-container">
+            <div id="grid" class="grid"></div>
+            <div id="grid-overlay" class="hidden">
+                <div class="modal">
+                    <p>Resizing will clear the current grid. Continue?</p>
+                    <div class="modal-actions">
+                        <button id="confirm-resize" class="btn danger">Yes, Resize</button>
+                        <button id="cancel-resize" class="btn secondary">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="io-panel">
+            <div class="hex-import">
+                <label for="hex-input">Load from HEX</label>
+                <div class="input-row">
+                    <input type="text" id="hex-input" placeholder="Paste HEX string here...">
+                    <button id="load-hex-btn" class="btn secondary">Load</button>
+                </div>
+                <span id="hex-error" class="error-msg"></span>
+            </div>
+
+            <div class="output-group">
+                <label>Generated Command</label>
+                <div class="code-block">
+                    <code id="command-output">./cgol_runner --box 10 10 --bitmask 0 --max-steps 1000</code>
+                    <button id="copy-cmd-btn" class="icon-btn" title="Copy Command">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="output-group">
+                <label>Bitmask Only</label>
+                <div class="code-block small">
+                    <code id="bitmask-output">0</code>
+                    <button id="copy-mask-btn" class="icon-btn" title="Copy Bitmask">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                </div>
+            </div>
+
+            <details class="encoding-info">
+                <summary>Encoding Explanation</summary>
+                <p>
+                    <strong>Row-major order:</strong> Cells are scanned row by row (y=0 to H-1), then column by column (x=0 to W-1).<br>
+                    <strong>Nibble packing:</strong> Bits are grouped into 4-bit chunks (nibbles). The first bit in the sequence becomes the Most Significant Bit (MSB) of the nibble.<br>
+                    <strong>Padding:</strong> If total bits aren't a multiple of 4, zeros are padded at the end.
+                </p>
+            </details>
+        </section>
+    </div>
+
+    <div id="toast" class="toast hidden">Copied to clipboard!</div>
+
+    <script src="app.js"></script>
+</body>
+</html>
