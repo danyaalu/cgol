@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/cgol_runner.dir/apps/runner/main.cpp.o -o cgol_runner  libcgol_core.a 

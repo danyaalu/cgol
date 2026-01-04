@@ -1,6 +1,0 @@
-/home/danyaal/Documents/development/lmc/cgol/build/CMakeFiles/cgol_core.dir
-/home/danyaal/Documents/development/lmc/cgol/build/CMakeFiles/cgol_runner.dir
-/home/danyaal/Documents/development/lmc/cgol/build/CMakeFiles/test_life.dir
-/home/danyaal/Documents/development/lmc/cgol/build/CMakeFiles/test.dir
-/home/danyaal/Documents/development/lmc/cgol/build/CMakeFiles/edit_cache.dir
-/home/danyaal/Documents/development/lmc/cgol/build/CMakeFiles/rebuild_cache.dir
