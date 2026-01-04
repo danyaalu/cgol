@@ -46,3 +46,9 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Binaries
+**/bin/
+
+# Go
+go.sum

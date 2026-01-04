@@ -6,20 +6,12 @@ import (
 
 func TestBlinker(t *testing.T) {
 	// Blinker is a period 2 oscillator.
-	// 0 0 0
-	// 0 1 0
-	// 0 1 0
-	// 0 1 0
-	// 0 0 0
-	// In a 5x5 grid, let's place it in the middle.
-	// We can manually construct it or use NewBoard if we calculate the seed.
-	// Let's manually construct for clarity.
-	
-	b := &Board{Width: 5, Height: 5, Cells: make([]bool, 25)}
 	// Vertical line at x=2, y=1,2,3
-	b.Cells[1*5+2] = true
-	b.Cells[2*5+2] = true
-	b.Cells[3*5+2] = true
+
+	b := &Board{Cells: make(map[Cell]bool)}
+	b.Cells[Cell{2, 1}] = true
+	b.Cells[Cell{2, 2}] = true
+	b.Cells[Cell{2, 3}] = true
 
 	gens, reason := b.Run(100)
 	if reason != "Loop Detected" {
@@ -36,11 +28,11 @@ func TestBlock(t *testing.T) {
 	// 0 1 1 0
 	// 0 1 1 0
 	// 0 0 0 0
-	b := &Board{Width: 4, Height: 4, Cells: make([]bool, 16)}
-	b.Cells[1*4+1] = true
-	b.Cells[1*4+2] = true
-	b.Cells[2*4+1] = true
-	b.Cells[2*4+2] = true
+	b := &Board{Cells: make(map[Cell]bool)}
+	b.Cells[Cell{1, 1}] = true
+	b.Cells[Cell{2, 1}] = true
+	b.Cells[Cell{1, 2}] = true
+	b.Cells[Cell{2, 2}] = true
 
 	gens, reason := b.Run(100)
 	if reason != "Stable" {
