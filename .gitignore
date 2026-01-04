@@ -55,3 +55,4 @@ go.sum
 
 # Distributed champion data
 distributed/champion.json
+distributed/nodes.json
