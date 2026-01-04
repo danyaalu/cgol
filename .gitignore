@@ -52,3 +52,6 @@ yarn-error.log*
 
 # Go
 go.sum
+
+# Distributed champion data
+distributed/champion.json
