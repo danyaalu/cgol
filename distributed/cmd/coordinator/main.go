@@ -10,29 +10,91 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"cgol-distributed/distributed/pkg/combinatorics"
 	"cgol-distributed/distributed/pkg/messages"
 )
 
 type Coordinator struct {
-	mu              sync.Mutex
-	currentSeed     uint64
-	maxSeed         uint64
-	chunkSize       uint64
-	width           int
-	height          int
-	nActive         int
-	maxGen          int
-	champions       []messages.ResultSubmission
-	championFile    string
+	mu           sync.Mutex
+	currentSeed  uint64
+	maxSeed      uint64
+	chunkSize    uint64
+	width        int
+	height       int
+	nActive      int
+	maxGen       int
+	champions    []messages.ResultSubmission
+	championFile string
+	dirty        bool
+}
+
+func (c *Coordinator) StartSaver() {
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			c.mu.Lock()
+			if !c.dirty {
+				c.mu.Unlock()
+				continue
+			}
+			// Copy champions to avoid race during save
+			champs := make([]messages.ResultSubmission, len(c.champions))
+			copy(champs, c.champions)
+			c.dirty = false
+			c.mu.Unlock()
+
+			c.saveChampions(champs)
+		}
+	}()
+}
+
+func (c *Coordinator) Monitor() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	var lastSeed uint64
+	// Moving average window
+	const windowSize = 30
+	history := make([]uint64, 0, windowSize)
+
+	for range ticker.C {
+		c.mu.Lock()
+		current := c.currentSeed
+		max := c.maxSeed
+		c.mu.Unlock()
+
+		diff := current - lastSeed
+		lastSeed = current
+
+		if len(history) >= windowSize {
+			history = history[1:]
+		}
+		history = append(history, diff)
+
+		var sum uint64
+		for _, v := range history {
+			sum += v
+		}
+		avg := float64(sum) / float64(len(history))
+
+		percent := 0.0
+		if max > 0 {
+			percent = float64(current) / float64(max) * 100
+		}
+
+		fmt.Printf("Status: Seed %d / %d (%.2f%%) | Speed: %.2f PPS\n",
+			current, max, percent, avg)
+	}
 }
 
 func NewCoordinator(width, height, nActive, maxGen int, chunkSize uint64, championFile string) *Coordinator {
 	// Calculate max combinations (width*height Choose nActive)
 	totalCells := int64(width * height)
 	maxComb := combinatorics.Binomial(totalCells, int64(nActive))
-	
+
 	var maxSeed uint64
 	if maxComb.IsUint64() {
 		maxSeed = maxComb.Uint64()
@@ -76,11 +138,11 @@ func (c *Coordinator) handleTask(w http.ResponseWriter, r *http.Request) {
 	// Simple linear assignment
 	start := c.currentSeed
 	end := start + c.chunkSize
-	
+
 	if end > c.maxSeed {
 		end = c.maxSeed
 	}
-	
+
 	c.currentSeed = end
 
 	resp := messages.TaskResponse{
@@ -109,41 +171,43 @@ func (c *Coordinator) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Calculate Hex
-	result.Hex = c.encodeHex(result.Seed)
+	// Calculate Hex if not provided by worker
+	if result.Hex == "" {
+		result.Hex = c.encodeHex(result.Seed)
+	}
 
 	if len(c.champions) == 0 || result.Generations > c.champions[0].Generations {
 		fmt.Printf("NEW CHAMPION! Seed: %d, Gens: %d\n", result.Seed, result.Generations)
 		c.champions = []messages.ResultSubmission{result}
-		c.saveChampions()
+		c.dirty = true
 	} else if result.Generations == c.champions[0].Generations {
 		fmt.Printf("MATCHING CHAMPION! Seed: %d, Gens: %d\n", result.Seed, result.Generations)
 		c.champions = append(c.champions, result)
-		c.saveChampions()
+		c.dirty = true
 	}
 }
 
-func (c *Coordinator) saveChampions() {
+func (c *Coordinator) saveChampions(champs []messages.ResultSubmission) {
 	file, err := os.Create(c.championFile)
 	if err != nil {
 		log.Printf("Error saving champions: %v", err)
 		return
 	}
 	defer file.Close()
-	
+
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	encoder.Encode(c.champions)
+	encoder.Encode(champs)
 }
 
 func (c *Coordinator) encodeHex(seedIndex uint64) string {
 	// Convert index to actual positions
 	indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(seedIndex), c.width*c.height, c.nActive)
-	
+
 	// Create a bitmap from positions
-	// Note: This only works if width*height <= 64. 
+	// Note: This only works if width*height <= 64.
 	// If larger, we can't represent as single uint64, but we can still generate hex string.
-	
+
 	totalBits := c.width * c.height
 	var hexStr strings.Builder
 
@@ -186,10 +250,14 @@ func main() {
 	height := flag.Int("height", 5, "Grid height")
 	nActive := flag.Int("n-active", 5, "Number of active cells")
 	maxGen := flag.Int("max-gen", 2000, "Maximum generations")
+	chunkSize := flag.Int64("chunk-size", 100000, "Number of programs per chunk")
 	port := flag.String("port", "8080", "Server port")
 	flag.Parse()
 
-	coord := NewCoordinator(*width, *height, *nActive, *maxGen, 1000, "champion.json")
+	coord := NewCoordinator(*width, *height, *nActive, *maxGen, uint64(*chunkSize), "champion.json")
+
+	go coord.Monitor()
+	coord.StartSaver()
 
 	http.HandleFunc("/config", coord.handleConfig)
 	http.HandleFunc("/task", coord.handleTask)

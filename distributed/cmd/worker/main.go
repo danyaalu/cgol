@@ -8,7 +8,9 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"cgol-distributed/distributed/pkg/combinatorics"
@@ -76,40 +78,57 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 	var wg sync.WaitGroup
 	results := make(chan messages.ResultSubmission, numThreads)
 
-	totalRange := task.EndSeed - task.StartSeed
-	chunkSize := totalRange / uint64(numThreads)
+	// Dynamic work stealing: threads grab batches of seeds atomically
+	currentSeed := task.StartSeed
+	const batchSize = 100
 
 	for i := 0; i < numThreads; i++ {
 		wg.Add(1)
-		start := task.StartSeed + uint64(i)*chunkSize
-		end := start + chunkSize
-		if i == numThreads-1 {
-			end = task.EndSeed
-		}
 
-		go func(s, e uint64) {
+		go func() {
 			defer wg.Done()
 			var localBestSeed uint64
 			var localMaxGens int
 			var localFinalState string
 
-			for seed := s; seed < e; seed++ {
-				// Convert seed (index) to combination
-				indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(seed), w.width*w.height, w.nActive)
-				board := simulation.NewBoardFromPositions(w.width, w.height, indices)
-				
-				// Limit max generations to avoid infinite loops
-				gens, reason := board.Run(w.maxGen)
+			for {
+				// Atomically claim a batch
+				endBatch := atomic.AddUint64(&currentSeed, batchSize)
+				startBatch := endBatch - batchSize
 
-				// Only consider programs that halt with extinction (all dead)
-				if reason != "Extinction" {
-					continue
+				if startBatch >= task.EndSeed {
+					break
 				}
 
-				if gens > localMaxGens {
-					localMaxGens = gens
-					localBestSeed = seed
-					localFinalState = reason
+				// Clamp the end of the batch to the task limit
+				if endBatch > task.EndSeed {
+					endBatch = task.EndSeed
+				}
+
+				// Initialize the first combination for this batch
+				indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(startBatch), w.width*w.height, w.nActive)
+
+				for seed := startBatch; seed < endBatch; seed++ {
+					// For subsequent seeds in the batch, calculate next combination incrementally
+					if seed > startBatch {
+						combinatorics.NextCombination(indices, w.width*w.height)
+					}
+
+					board := simulation.NewBoardFromPositions(w.width, w.height, indices)
+
+					// Limit max generations to avoid infinite loops
+					gens, reason := board.Run(w.maxGen)
+
+					// Only consider programs that halt with extinction (all dead)
+					if reason != "Extinction" {
+						continue
+					}
+
+					if gens > localMaxGens {
+						localMaxGens = gens
+						localBestSeed = seed
+						localFinalState = reason
+					}
 				}
 			}
 
@@ -121,7 +140,7 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 					FinalState:  localFinalState,
 				}
 			}
-		}(start, end)
+		}()
 	}
 
 	wg.Wait()
@@ -135,9 +154,51 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 	}
 
 	if bestResult.Generations > 0 {
+		bestResult.Hex = w.encodeHex(bestResult.Seed)
 		fmt.Printf("Batch Best: Seed %d, Gens %d\n", bestResult.Seed, bestResult.Generations)
 		w.submitResult(bestResult)
 	}
+}
+
+func (w *Worker) encodeHex(seedIndex uint64) string {
+	// Convert index to actual positions
+	indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(seedIndex), w.width*w.height, w.nActive)
+
+	totalBits := w.width * w.height
+	var hexStr strings.Builder
+
+	// Helper to check if bit 'pos' is set
+	isSet := func(pos int) bool {
+		for _, idx := range indices {
+			if idx == pos {
+				return true
+			}
+		}
+		return false
+	}
+
+	for i := 0; i < totalBits; i += 4 {
+		var val byte
+		// Bit 0 (MSB of nibble)
+		if i < totalBits && isSet(i) {
+			val |= 8
+		}
+		// Bit 1
+		if i+1 < totalBits && isSet(i+1) {
+			val |= 4
+		}
+		// Bit 2
+		if i+2 < totalBits && isSet(i+2) {
+			val |= 2
+		}
+		// Bit 3 (LSB of nibble)
+		if i+3 < totalBits && isSet(i+3) {
+			val |= 1
+		}
+
+		hexStr.WriteString(fmt.Sprintf("%X", val))
+	}
+	return hexStr.String()
 }
 
 func main() {
@@ -170,7 +231,7 @@ func main() {
 		}
 
 		fmt.Printf("Processing task: %d - %d\n", task.StartSeed, task.EndSeed)
-		
+
 		w.processTask(task, *threads)
 	}
 }
