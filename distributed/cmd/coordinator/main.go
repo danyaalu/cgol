@@ -87,6 +87,11 @@ func (c *Coordinator) Monitor() {
 
 		fmt.Printf("Status: Seed %d / %d (%.2f%%) | Speed: %.2f PPS\n",
 			current, max, percent, avg)
+
+		if current >= max {
+			fmt.Println("Brute force completed.")
+			return
+		}
 	}
 }
 
