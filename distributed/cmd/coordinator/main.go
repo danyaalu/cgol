@@ -1,54 +1,36 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"math/big"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"cgol-distributed/distributed/pkg/combinatorics"
 	"cgol-distributed/distributed/pkg/messages"
+	"cgol-distributed/distributed/pkg/storage"
 )
 
 type Coordinator struct {
-	mu           sync.Mutex
-	currentSeed  uint64
-	maxSeed      uint64
-	chunkSize    uint64
-	width        int
-	height       int
-	nActive      int
-	maxGen       int
-	champions    []messages.ResultSubmission
-	championFile string
-	dirty        bool
-}
-
-func (c *Coordinator) StartSaver() {
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			c.mu.Lock()
-			if !c.dirty {
-				c.mu.Unlock()
-				continue
-			}
-			// Copy champions to avoid race during save
-			champs := make([]messages.ResultSubmission, len(c.champions))
-			copy(champs, c.champions)
-			c.dirty = false
-			c.mu.Unlock()
-
-			c.saveChampions(champs)
-		}
-	}()
+	mu          sync.Mutex
+	currentSeed uint64
+	maxSeed     uint64
+	chunkSize   uint64
+	width       int
+	height      int
+	nActive     int
+	maxGen      int
+	store       *storage.ChampionStore
 }
 
 func (c *Coordinator) Monitor() {
@@ -95,7 +77,7 @@ func (c *Coordinator) Monitor() {
 	}
 }
 
-func NewCoordinator(width, height, nActive, maxGen int, chunkSize uint64, championFile string) *Coordinator {
+func NewCoordinator(width, height, nActive, maxGen int, chunkSize uint64, store *storage.ChampionStore) *Coordinator {
 	// Calculate max combinations (width*height Choose nActive)
 	totalCells := int64(width * height)
 	maxComb := combinatorics.Binomial(totalCells, int64(nActive))
@@ -109,13 +91,13 @@ func NewCoordinator(width, height, nActive, maxGen int, chunkSize uint64, champi
 	}
 
 	return &Coordinator{
-		width:        width,
-		height:       height,
-		nActive:      nActive,
-		maxGen:       maxGen,
-		chunkSize:    chunkSize,
-		championFile: championFile,
-		maxSeed:      maxSeed,
+		width:     width,
+		height:    height,
+		nActive:   nActive,
+		maxGen:    maxGen,
+		chunkSize: chunkSize,
+		maxSeed:   maxSeed,
+		store:     store,
 	}
 }
 
@@ -165,9 +147,6 @@ func (c *Coordinator) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	fmt.Printf("Received submission: Seed %d, Gens %d\n", result.Seed, result.Generations)
 
 	// Only accept Extinction results
@@ -181,28 +160,44 @@ func (c *Coordinator) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		result.Hex = c.encodeHex(result.Seed)
 	}
 
-	if len(c.champions) == 0 || result.Generations > c.champions[0].Generations {
+	scope := storage.Scope{
+		W:       c.width,
+		H:       c.height,
+		NActive: c.nActive,
+		GenCap:  c.maxGen,
+	}
+
+	res := c.store.Submit(storage.Candidate{
+		Scope:    scope,
+		GenCount: result.Generations,
+		Program:  result.Hex,
+	})
+
+	if res.Err != nil {
+		log.Printf("Error saving champion: %v", res.Err)
+		http.Error(w, "failed to persist champion", http.StatusInternalServerError)
+		return
+	}
+
+	switch res.Outcome {
+	case storage.OutcomeInsertedNewBest:
 		fmt.Printf("NEW CHAMPION! Seed: %d, Gens: %d\n", result.Seed, result.Generations)
-		c.champions = []messages.ResultSubmission{result}
-		c.dirty = true
-	} else if result.Generations == c.champions[0].Generations {
+	case storage.OutcomeInsertedTie:
 		fmt.Printf("MATCHING CHAMPION! Seed: %d, Gens: %d\n", result.Seed, result.Generations)
-		c.champions = append(c.champions, result)
-		c.dirty = true
+	case storage.OutcomeCachedTie:
+		fmt.Printf("Cached matching champion: Seed %d, Gens %d\n", result.Seed, result.Generations)
+	case storage.OutcomeDuplicate:
+		fmt.Printf("Duplicate champion ignored for scope %dx%d n_active=%d gen_cap=%d\n", c.width, c.height, c.nActive, c.maxGen)
+	case storage.OutcomeIgnoredLower:
+		fmt.Printf("Ignoring inferior submission from %s: Seed %d Gens %d (best %d)\n", result.WorkerID, result.Seed, result.Generations, res.BestGen)
 	}
 }
 
-func (c *Coordinator) saveChampions(champs []messages.ResultSubmission) {
-	file, err := os.Create(c.championFile)
-	if err != nil {
-		log.Printf("Error saving champions: %v", err)
-		return
+func (c *Coordinator) Close() error {
+	if c.store == nil {
+		return nil
 	}
-	defer file.Close()
-
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	encoder.Encode(champs)
+	return c.store.Close()
 }
 
 func (c *Coordinator) encodeHex(seedIndex uint64) string {
@@ -256,18 +251,53 @@ func main() {
 	nActive := flag.Int("n-active", 5, "Number of active cells")
 	maxGen := flag.Int("max-gen", 2000, "Maximum generations")
 	chunkSize := flag.Int64("chunk-size", 100000, "Number of programs per chunk")
+	championDB := flag.String("champion-db", "champions.db", "Path to champions SQLite database")
+	cacheSize := flag.Int("champion-cache-size", 1, "Number of tie submissions to cache per scope before flushing")
 	port := flag.String("port", "8080", "Server port")
 	flag.Parse()
 
-	coord := NewCoordinator(*width, *height, *nActive, *maxGen, uint64(*chunkSize), "champion.json")
+	store, err := storage.NewChampionStore(*championDB, *cacheSize)
+	if err != nil {
+		log.Fatalf("Failed to start champion store: %v", err)
+	}
+	defer store.Close()
+
+	coord := NewCoordinator(*width, *height, *nActive, *maxGen, uint64(*chunkSize), store)
 
 	go coord.Monitor()
-	coord.StartSaver()
 
-	http.HandleFunc("/config", coord.handleConfig)
-	http.HandleFunc("/task", coord.handleTask)
-	http.HandleFunc("/submit", coord.handleSubmit)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/config", coord.handleConfig)
+	mux.HandleFunc("/task", coord.handleTask)
+	mux.HandleFunc("/submit", coord.handleSubmit)
+
+	srv := &http.Server{
+		Addr:    ":" + *port,
+		Handler: mux,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("HTTP server shutdown error: %v", err)
+		}
+		if err := coord.Close(); err != nil {
+			log.Printf("Error closing coordinator: %v", err)
+		}
+	}()
 
 	fmt.Printf("Coordinator started on port %s for %dx%d grid\n", *port, *width, *height)
-	log.Fatal(http.ListenAndServe(":"+*port, nil))
+
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatalf("Server error: %v", err)
+	}
+
+	if err := coord.Close(); err != nil {
+		log.Printf("Error closing coordinator: %v", err)
+	}
 }

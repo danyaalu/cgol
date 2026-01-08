@@ -49,6 +49,8 @@ yarn-error.log*
 
 # Binaries
 **/bin/
+coordinator
+distributed/coordinator
 
 # Go
 go.sum
@@ -56,3 +58,8 @@ go.sum
 # Distributed champion data
 distributed/champion.json
 distributed/nodes.json
+
+# Storage files
+*.db
+*.db-*
+champion.json
