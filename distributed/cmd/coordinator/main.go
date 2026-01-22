@@ -107,7 +107,7 @@ func (c *Coordinator) initCurrentTask() {
 		return
 	}
 	task := c.tasks[c.taskIndex]
-	
+
 	// Calculate max combinations (width*height Choose nActive)
 	totalCells := int64(task.Width * task.Height)
 	maxComb := combinatorics.Binomial(totalCells, int64(task.NActive))
@@ -120,7 +120,7 @@ func (c *Coordinator) initCurrentTask() {
 		maxSeed = ^uint64(0) // Cap at MaxUint64
 		log.Printf("Warning: Total combinations exceed uint64. Capped at %d", maxSeed)
 	}
-	
+
 	c.maxSeed = maxSeed
 	c.currentSeed = 0
 }
@@ -128,7 +128,7 @@ func (c *Coordinator) initCurrentTask() {
 func (c *Coordinator) handleConfig(w http.ResponseWriter, r *http.Request) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	
+
 	// Return the configuration of the current task, or the first one if finished
 	idx := c.taskIndex
 	if idx >= len(c.tasks) {
