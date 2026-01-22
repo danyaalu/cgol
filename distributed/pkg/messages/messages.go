@@ -18,6 +18,10 @@ type TaskResponse struct {
 	StartSeed uint64 `json:"start_seed"`
 	EndSeed   uint64 `json:"end_seed"` // Exclusive
 	TaskID    string `json:"task_id"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	NActive   int    `json:"n_active"`
+	MaxGen    int    `json:"max_gen"`
 }
 
 // ResultSubmission is sent by a worker when it finds a candidate.
@@ -28,4 +32,8 @@ type ResultSubmission struct {
 	MaxPopulation int    `json:"max_population"`
 	Hex           string `json:"hex,omitempty"`
 	FinalState    string `json:"final_state,omitempty"`
+	Width         int    `json:"width"`
+	Height        int    `json:"height"`
+	NActive       int    `json:"n_active"`
+	MaxGen        int    `json:"max_gen"`
 }

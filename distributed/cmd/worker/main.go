@@ -82,6 +82,19 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 	currentSeed := task.StartSeed
 	const batchSize = 100
 
+	// Use task parameters if available, otherwise fall back to worker defaults
+	width := task.Width
+	height := task.Height
+	nActive := task.NActive
+	maxGen := task.MaxGen
+
+	if width == 0 {
+		width = w.width
+		height = w.height
+		nActive = w.nActive
+		maxGen = w.maxGen
+	}
+
 	for i := 0; i < numThreads; i++ {
 		wg.Add(1)
 
@@ -106,18 +119,18 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 				}
 
 				// Initialize the first combination for this batch
-				indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(startBatch), w.width*w.height, w.nActive)
+				indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(startBatch), width*height, nActive)
 
 				for seed := startBatch; seed < endBatch; seed++ {
 					// For subsequent seeds in the batch, calculate next combination incrementally
 					if seed > startBatch {
-						combinatorics.NextCombination(indices, w.width*w.height)
+						combinatorics.NextCombination(indices, width*height)
 					}
 
-					board := simulation.NewBoardFromPositions(w.width, w.height, indices)
+					board := simulation.NewBoardFromPositions(width, height, indices)
 
 					// Limit max generations to avoid infinite loops
-					gens, reason := board.Run(w.maxGen)
+					gens, reason := board.Run(maxGen)
 
 					// Only consider programs that halt with extinction (all dead)
 					if reason != "Extinction" {
@@ -138,6 +151,10 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 					Seed:        localBestSeed,
 					Generations: localMaxGens,
 					FinalState:  localFinalState,
+					Width:       width,
+					Height:      height,
+					NActive:     nActive,
+					MaxGen:      maxGen,
 				}
 			}
 		}()

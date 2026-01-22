@@ -21,15 +21,20 @@ import (
 	"cgol-distributed/distributed/pkg/storage"
 )
 
+type TaskConfig struct {
+	Width   int `json:"width"`
+	Height  int `json:"height"`
+	NActive int `json:"n_active"`
+	MaxGen  int `json:"max_gen"`
+}
+
 type Coordinator struct {
 	mu          sync.Mutex
+	tasks       []TaskConfig
+	taskIndex   int
 	currentSeed uint64
 	maxSeed     uint64
 	chunkSize   uint64
-	width       int
-	height      int
-	nActive     int
-	maxGen      int
 	store       *storage.ChampionStore
 }
 
@@ -44,8 +49,17 @@ func (c *Coordinator) Monitor() {
 
 	for range ticker.C {
 		c.mu.Lock()
+		if c.taskIndex >= len(c.tasks) {
+			c.mu.Unlock()
+			fmt.Println("All brute force tasks completed.")
+			return
+		}
+
 		current := c.currentSeed
 		max := c.maxSeed
+		currentTask := c.tasks[c.taskIndex]
+		taskIdx := c.taskIndex
+		totalTasks := len(c.tasks)
 		c.mu.Unlock()
 
 		diff := current - lastSeed
@@ -67,46 +81,66 @@ func (c *Coordinator) Monitor() {
 			percent = float64(current) / float64(max) * 100
 		}
 
-		fmt.Printf("Status: Seed %d / %d (%.2f%%) | Speed: %.2f PPS\n",
+		fmt.Printf("Task %d/%d [%dx%d n=%d]: Seed %d / %d (%.2f%%) | Speed: %.2f PPS\n",
+			taskIdx+1, totalTasks, currentTask.Width, currentTask.Height, currentTask.NActive,
 			current, max, percent, avg)
-
-		if current >= max {
-			fmt.Println("Brute force completed.")
-			return
-		}
 	}
 }
 
-func NewCoordinator(width, height, nActive, maxGen int, chunkSize uint64, store *storage.ChampionStore) *Coordinator {
+func NewCoordinator(tasks []TaskConfig, chunkSize uint64, store *storage.ChampionStore) *Coordinator {
+	if len(tasks) == 0 {
+		log.Fatal("No tasks provided to coordinator")
+	}
+
+	c := &Coordinator{
+		tasks:     tasks,
+		chunkSize: chunkSize,
+		store:     store,
+		taskIndex: 0,
+	}
+	c.initCurrentTask()
+	return c
+}
+
+func (c *Coordinator) initCurrentTask() {
+	if c.taskIndex >= len(c.tasks) {
+		return
+	}
+	task := c.tasks[c.taskIndex]
+	
 	// Calculate max combinations (width*height Choose nActive)
-	totalCells := int64(width * height)
-	maxComb := combinatorics.Binomial(totalCells, int64(nActive))
+	totalCells := int64(task.Width * task.Height)
+	maxComb := combinatorics.Binomial(totalCells, int64(task.NActive))
 
 	var maxSeed uint64
 	if maxComb.IsUint64() {
 		maxSeed = maxComb.Uint64()
+		// If explicit overflow check is needed, logic goes here
 	} else {
 		maxSeed = ^uint64(0) // Cap at MaxUint64
 		log.Printf("Warning: Total combinations exceed uint64. Capped at %d", maxSeed)
 	}
-
-	return &Coordinator{
-		width:     width,
-		height:    height,
-		nActive:   nActive,
-		maxGen:    maxGen,
-		chunkSize: chunkSize,
-		maxSeed:   maxSeed,
-		store:     store,
-	}
+	
+	c.maxSeed = maxSeed
+	c.currentSeed = 0
 }
 
 func (c *Coordinator) handleConfig(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	// Return the configuration of the current task, or the first one if finished
+	idx := c.taskIndex
+	if idx >= len(c.tasks) {
+		idx = 0
+	}
+	task := c.tasks[idx]
+
 	resp := messages.ConfigResponse{
-		Width:   c.width,
-		Height:  c.height,
-		NActive: c.nActive,
-		MaxGen:  c.maxGen,
+		Width:   task.Width,
+		Height:  task.Height,
+		NActive: task.NActive,
+		MaxGen:  task.MaxGen,
 	}
 	json.NewEncoder(w).Encode(resp)
 }
@@ -115,12 +149,20 @@ func (c *Coordinator) handleTask(w http.ResponseWriter, r *http.Request) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.currentSeed >= c.maxSeed {
-		json.NewEncoder(w).Encode(messages.TaskResponse{
-			TaskID: "DONE",
-		})
-		return
+	// Check if we need to advance to the next task
+	for c.currentSeed >= c.maxSeed {
+		c.taskIndex++
+		if c.taskIndex >= len(c.tasks) {
+			json.NewEncoder(w).Encode(messages.TaskResponse{
+				TaskID: "DONE",
+			})
+			return
+		}
+		c.initCurrentTask()
+		fmt.Printf("Advancing to Task %d/%d: %dx%d n=%d\n", c.taskIndex+1, len(c.tasks), c.tasks[c.taskIndex].Width, c.tasks[c.taskIndex].Height, c.tasks[c.taskIndex].NActive)
 	}
+
+	task := c.tasks[c.taskIndex]
 
 	// Simple linear assignment
 	start := c.currentSeed
@@ -135,7 +177,11 @@ func (c *Coordinator) handleTask(w http.ResponseWriter, r *http.Request) {
 	resp := messages.TaskResponse{
 		StartSeed: start,
 		EndSeed:   end,
-		TaskID:    fmt.Sprintf("%d-%d", start, end),
+		TaskID:    fmt.Sprintf("%d-%d-%d", c.taskIndex, start, end),
+		Width:     task.Width,
+		Height:    task.Height,
+		NActive:   task.NActive,
+		MaxGen:    task.MaxGen,
 	}
 	json.NewEncoder(w).Encode(resp)
 }
@@ -147,7 +193,7 @@ func (c *Coordinator) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("Received submission: Seed %d, Gens %d\n", result.Seed, result.Generations)
+	fmt.Printf("Received submission: Seed %d, Gens %d from %s\n", result.Seed, result.Generations, result.WorkerID)
 
 	// Only accept Extinction results
 	if result.FinalState != "Extinction" {
@@ -155,16 +201,30 @@ func (c *Coordinator) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use parameters from result, fallback to current task if missing (should not happen with updated workers)
+	// Fallback logic is risky if task switched, but best effort.
+	scopeWidth := result.Width
+	scopeHeight := result.Height
+	scopeNActive := result.NActive
+	scopeMaxGen := result.MaxGen
+
+	if scopeWidth == 0 {
+		// Log warning or try to infer?
+		// For now, let's just log a warning and try current task, but this is dangerous.
+		// Assuming updated workers.
+		fmt.Println("Warning: Submission missing task parameters. Attributes may be incorrect.")
+	}
+
 	// Calculate Hex if not provided by worker
 	if result.Hex == "" {
-		result.Hex = c.encodeHex(result.Seed)
+		result.Hex = c.encodeHex(result.Seed, scopeWidth, scopeHeight, scopeNActive)
 	}
 
 	scope := storage.Scope{
-		W:       c.width,
-		H:       c.height,
-		NActive: c.nActive,
-		GenCap:  c.maxGen,
+		W:       scopeWidth,
+		H:       scopeHeight,
+		NActive: scopeNActive,
+		GenCap:  scopeMaxGen,
 	}
 
 	res := c.store.Submit(storage.Candidate{
@@ -187,7 +247,7 @@ func (c *Coordinator) handleSubmit(w http.ResponseWriter, r *http.Request) {
 	case storage.OutcomeCachedTie:
 		fmt.Printf("Cached matching champion: Seed %d, Gens %d\n", result.Seed, result.Generations)
 	case storage.OutcomeDuplicate:
-		fmt.Printf("Duplicate champion ignored for scope %dx%d n_active=%d gen_cap=%d\n", c.width, c.height, c.nActive, c.maxGen)
+		fmt.Printf("Duplicate champion ignored for scope %dx%d n_active=%d gen_cap=%d\n", scopeWidth, scopeHeight, scopeNActive, scopeMaxGen)
 	case storage.OutcomeIgnoredLower:
 		fmt.Printf("Ignoring inferior submission from %s: Seed %d Gens %d (best %d)\n", result.WorkerID, result.Seed, result.Generations, res.BestGen)
 	}
@@ -200,15 +260,15 @@ func (c *Coordinator) Close() error {
 	return c.store.Close()
 }
 
-func (c *Coordinator) encodeHex(seedIndex uint64) string {
+func (c *Coordinator) encodeHex(seedIndex uint64, width, height, nActive int) string {
 	// Convert index to actual positions
-	indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(seedIndex), c.width*c.height, c.nActive)
+	indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(seedIndex), width*height, nActive)
 
 	// Create a bitmap from positions
 	// Note: This only works if width*height <= 64.
 	// If larger, we can't represent as single uint64, but we can still generate hex string.
 
-	totalBits := c.width * c.height
+	totalBits := width * height
 	var hexStr strings.Builder
 
 	// Helper to check if bit 'pos' is set
@@ -250,6 +310,7 @@ func main() {
 	height := flag.Int("height", 5, "Grid height")
 	nActive := flag.Int("n-active", 5, "Number of active cells")
 	maxGen := flag.Int("max-gen", 2000, "Maximum generations")
+	tasksFile := flag.String("tasks", "", "Path to JSON file containing list of tasks (overrides individual flags)")
 	chunkSize := flag.Int64("chunk-size", 100000, "Number of programs per chunk")
 	championDB := flag.String("champion-db", "champions.db", "Path to champions SQLite database")
 	cacheSize := flag.Int("champion-cache-size", 1, "Number of tie submissions to cache per scope before flushing")
@@ -262,7 +323,26 @@ func main() {
 	}
 	defer store.Close()
 
-	coord := NewCoordinator(*width, *height, *nActive, *maxGen, uint64(*chunkSize), store)
+	var tasks []TaskConfig
+	if *tasksFile != "" {
+		data, err := os.ReadFile(*tasksFile)
+		if err != nil {
+			log.Fatalf("Failed to read tasks file: %v", err)
+		}
+		if err := json.Unmarshal(data, &tasks); err != nil {
+			log.Fatalf("Failed to parse tasks file: %v", err)
+		}
+		fmt.Printf("Loaded %d tasks from %s\n", len(tasks), *tasksFile)
+	} else {
+		tasks = []TaskConfig{{
+			Width:   *width,
+			Height:  *height,
+			NActive: *nActive,
+			MaxGen:  *maxGen,
+		}}
+	}
+
+	coord := NewCoordinator(tasks, uint64(*chunkSize), store)
 
 	go coord.Monitor()
 
@@ -291,7 +371,11 @@ func main() {
 		}
 	}()
 
-	fmt.Printf("Coordinator started on port %s for %dx%d grid\n", *port, *width, *height)
+	if *tasksFile != "" {
+		fmt.Printf("Coordinator started on port %s running %d tasks\n", *port, len(tasks))
+	} else {
+		fmt.Printf("Coordinator started on port %s for %dx%d grid\n", *port, *width, *height)
+	}
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("Server error: %v", err)
