@@ -168,9 +168,10 @@ func (p *Pattern) AllSymmetries() []*Pattern {
 
 // compareLexicographic compares two patterns lexicographically.
 // Returns:
-//  -1 if p1 < p2
-//   0 if p1 == p2
-//  +1 if p1 > p2
+//
+//	-1 if p1 < p2
+//	 0 if p1 == p2
+//	+1 if p1 > p2
 func compareLexicographic(p1, p2 *Pattern) int {
 	// First compare dimensions (smaller dimensions come first)
 	if p1.Width != p2.Width {

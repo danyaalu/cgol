@@ -122,7 +122,8 @@ func (c *Coordinator) initCurrentTask() {
 	}
 
 	c.maxSeed = maxSeed
-	c.currentSeed = 0
+	c.currentSeed = 0 // CRITICAL: Reset seed counter for new task
+	fmt.Printf("Initialized task %d: maxSeed=%d, currentSeed reset to 0\n", c.taskIndex, maxSeed)
 }
 
 func (c *Coordinator) handleConfig(w http.ResponseWriter, r *http.Request) {

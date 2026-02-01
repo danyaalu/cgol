@@ -311,9 +311,9 @@ func TestDeterminism(t *testing.T) {
 // TestReductionRatio measures the symmetry reduction for typical patterns
 func TestReductionRatio(t *testing.T) {
 	patterns := []*Pattern{
-		NewPattern(3, 3, []int{0, 1, 4}),           // Asymmetric
-		NewPattern(4, 4, []int{5, 6, 9, 10}),       // Block (symmetric)
-		NewPattern(5, 5, []int{2, 7, 12, 17, 22}),  // Vertical line
+		NewPattern(3, 3, []int{0, 1, 4}),            // Asymmetric
+		NewPattern(4, 4, []int{5, 6, 9, 10}),        // Block (symmetric)
+		NewPattern(5, 5, []int{2, 7, 12, 17, 22}),   // Vertical line
 		NewPattern(5, 5, []int{10, 11, 12, 13, 14}), // Horizontal line
 	}
 
