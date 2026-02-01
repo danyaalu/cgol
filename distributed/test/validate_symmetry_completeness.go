@@ -107,16 +107,16 @@ func runBruteForce(width, height, nActive, maxGen int, useSymmetry bool) []Champ
 
 func encodeHex(seedIndex uint64, width, height, nActive int) string {
 	indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(seedIndex), width*height, nActive)
-	
+
 	totalBits := width * height
 	result := make([]byte, (totalBits+3)/4)
-	
+
 	for _, idx := range indices {
 		byteIdx := idx / 4
 		bitPos := 3 - (idx % 4)
 		result[byteIdx] |= (1 << bitPos)
 	}
-	
+
 	hexStr := ""
 	for _, b := range result {
 		hexStr += fmt.Sprintf("%X", b)
@@ -185,25 +185,25 @@ func compareChampions(withoutSymmetry, withSymmetry []Champion) {
 
 	// Verify logical equivalence by checking patterns
 	fmt.Printf("\n=== Verifying UNIQUE OUTCOME GROUPS ===\n")
-	
+
 	// Build symmetry equivalence classes for WITHOUT symmetry champions
 	// Group patterns that are symmetrically equivalent
 	equivalenceClasses := make(map[string][]Champion)
-	
+
 	for _, champ := range withoutSymmetry {
 		indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(champ.Seed), 5*5, 5)
 		pattern := symmetry.NewPattern(5, 5, indices)
 		canonical := pattern.CanonicalForm()
-		
+
 		// Use canonical pattern cells as key
 		key := fmt.Sprintf("%v", canonical.Cells)
 		equivalenceClasses[key] = append(equivalenceClasses[key], champ)
 	}
-	
-	fmt.Printf("  Without symmetry: %d champions = %d unique symmetry classes\n", 
+
+	fmt.Printf("  Without symmetry: %d champions = %d unique symmetry classes\n",
 		len(withoutSymmetry), len(equivalenceClasses))
 	fmt.Printf("  With symmetry: %d champions selected\n", len(withSymmetry))
-	
+
 	// Verify each equivalence class has exactly one representative in WITH symmetry
 	classesRepresented := 0
 	for _, class := range equivalenceClasses {
@@ -224,13 +224,13 @@ func compareChampions(withoutSymmetry, withSymmetry []Champion) {
 			classesRepresented++
 		}
 	}
-	
+
 	if classesRepresented == len(equivalenceClasses) {
 		fmt.Printf("  ✅ All %d unique outcome groups have representatives\n", len(equivalenceClasses))
 	} else {
 		fmt.Printf("  ❌ Only %d/%d outcome groups represented!\n", classesRepresented, len(equivalenceClasses))
 	}
-	
+
 	// Show sample equivalence class
 	if len(equivalenceClasses) > 0 {
 		fmt.Printf("\n=== Sample Equivalence Class ===\n")
