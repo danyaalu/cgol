@@ -16,6 +16,7 @@ import (
 	"cgol-distributed/distributed/pkg/combinatorics"
 	"cgol-distributed/distributed/pkg/messages"
 	"cgol-distributed/distributed/pkg/simulation"
+	"cgol-distributed/distributed/pkg/symmetry"
 )
 
 type Worker struct {
@@ -95,6 +96,9 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 		maxGen = w.maxGen
 	}
 
+	// Metrics: track patterns skipped due to symmetry
+	var totalProcessed, skippedSymmetry uint64
+
 	for i := 0; i < numThreads; i++ {
 		wg.Add(1)
 
@@ -103,6 +107,7 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 			var localBestSeed uint64
 			var localMaxGens int
 			var localFinalState string
+			var localProcessed, localSkipped uint64
 
 			for {
 				// Atomically claim a batch
@@ -127,6 +132,16 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 						combinatorics.NextCombination(indices, width*height)
 					}
 
+					localProcessed++
+
+					// SYMMETRY CHECK: Skip non-canonical patterns
+					// This is the key optimization: only simulate patterns in canonical form
+					pattern := symmetry.NewPattern(width, height, indices)
+					if !pattern.IsCanonical() {
+						localSkipped++
+						continue
+					}
+
 					board := simulation.NewBoardFromPositions(width, height, indices)
 
 					// Limit max generations to avoid infinite loops
@@ -145,6 +160,10 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 				}
 			}
 
+			// Update global metrics
+			atomic.AddUint64(&totalProcessed, localProcessed)
+			atomic.AddUint64(&skippedSymmetry, localSkipped)
+
 			if localMaxGens > 0 {
 				results <- messages.ResultSubmission{
 					WorkerID:    w.workerID,
@@ -162,6 +181,13 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 
 	wg.Wait()
 	close(results)
+
+	// Report symmetry reduction statistics
+	if totalProcessed > 0 {
+		reductionPct := float64(skippedSymmetry) / float64(totalProcessed) * 100
+		fmt.Printf("Symmetry Filter: %d/%d patterns skipped (%.1f%% reduction)\n",
+			skippedSymmetry, totalProcessed, reductionPct)
+	}
 
 	var bestResult messages.ResultSubmission
 	for res := range results {
