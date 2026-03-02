@@ -36,6 +36,7 @@ type Coordinator struct {
 	maxSeed     uint64
 	chunkSize   uint64
 	store       *storage.ChampionStore
+	useSymmetry bool
 }
 
 func (c *Coordinator) Monitor() {
@@ -87,16 +88,17 @@ func (c *Coordinator) Monitor() {
 	}
 }
 
-func NewCoordinator(tasks []TaskConfig, chunkSize uint64, store *storage.ChampionStore) *Coordinator {
+func NewCoordinator(tasks []TaskConfig, chunkSize uint64, useSymmetry bool, store *storage.ChampionStore) *Coordinator {
 	if len(tasks) == 0 {
 		log.Fatal("No tasks provided to coordinator")
 	}
 
 	c := &Coordinator{
-		tasks:     tasks,
-		chunkSize: chunkSize,
-		store:     store,
-		taskIndex: 0,
+		tasks:       tasks,
+		chunkSize:   chunkSize,
+		store:       store,
+		taskIndex:   0,
+		useSymmetry: useSymmetry,
 	}
 	c.initCurrentTask()
 	return c
@@ -138,10 +140,11 @@ func (c *Coordinator) handleConfig(w http.ResponseWriter, r *http.Request) {
 	task := c.tasks[idx]
 
 	resp := messages.ConfigResponse{
-		Width:   task.Width,
-		Height:  task.Height,
-		NActive: task.NActive,
-		MaxGen:  task.MaxGen,
+		Width:       task.Width,
+		Height:      task.Height,
+		NActive:     task.NActive,
+		MaxGen:      task.MaxGen,
+		UseSymmetry: c.useSymmetry,
 	}
 	json.NewEncoder(w).Encode(resp)
 }
@@ -176,13 +179,14 @@ func (c *Coordinator) handleTask(w http.ResponseWriter, r *http.Request) {
 	c.currentSeed = end
 
 	resp := messages.TaskResponse{
-		StartSeed: start,
-		EndSeed:   end,
-		TaskID:    fmt.Sprintf("%d-%d-%d", c.taskIndex, start, end),
-		Width:     task.Width,
-		Height:    task.Height,
-		NActive:   task.NActive,
-		MaxGen:    task.MaxGen,
+		StartSeed:   start,
+		EndSeed:     end,
+		TaskID:      fmt.Sprintf("%d-%d-%d", c.taskIndex, start, end),
+		Width:       task.Width,
+		Height:      task.Height,
+		NActive:     task.NActive,
+		MaxGen:      task.MaxGen,
+		UseSymmetry: c.useSymmetry,
 	}
 	json.NewEncoder(w).Encode(resp)
 }
@@ -221,11 +225,17 @@ func (c *Coordinator) handleSubmit(w http.ResponseWriter, r *http.Request) {
 		result.Hex = c.encodeHex(result.Seed, scopeWidth, scopeHeight, scopeNActive)
 	}
 
+	// Determine the task ID from the current task parameters
+	c.mu.Lock()
+	taskID := c.taskIndex
+	c.mu.Unlock()
+
 	scope := storage.Scope{
 		W:       scopeWidth,
 		H:       scopeHeight,
 		NActive: scopeNActive,
 		GenCap:  scopeMaxGen,
+		TaskID:  taskID,
 	}
 
 	res := c.store.Submit(storage.Candidate{
@@ -262,47 +272,41 @@ func (c *Coordinator) Close() error {
 }
 
 func (c *Coordinator) encodeHex(seedIndex uint64, width, height, nActive int) string {
-	// Convert index to actual positions
 	indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(seedIndex), width*height, nActive)
+	set := make(map[int]struct{}, len(indices))
+	for _, idx := range indices {
+		set[idx] = struct{}{}
+	}
 
-	// Create a bitmap from positions
-	// Note: This only works if width*height <= 64.
-	// If larger, we can't represent as single uint64, but we can still generate hex string.
-
-	totalBits := width * height
 	var hexStr strings.Builder
+	var nibble byte
+	bitCount := 0
 
-	// Helper to check if bit 'pos' is set
-	isSet := func(pos int) bool {
-		for _, idx := range indices {
-			if idx == pos {
-				return true
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			pos := y*width + x
+			_, on := set[pos]
+			bit := byte(0)
+			if on {
+				bit = 1
+			}
+
+			nibble = (nibble << 1) | bit
+			bitCount++
+
+			if bitCount == 4 {
+				hexStr.WriteString(fmt.Sprintf("%X", nibble))
+				nibble = 0
+				bitCount = 0
 			}
 		}
-		return false
 	}
 
-	for i := 0; i < totalBits; i += 4 {
-		var val byte
-		// Bit 0 (MSB of nibble)
-		if i < totalBits && isSet(i) {
-			val |= 8
-		}
-		// Bit 1
-		if i+1 < totalBits && isSet(i+1) {
-			val |= 4
-		}
-		// Bit 2
-		if i+2 < totalBits && isSet(i+2) {
-			val |= 2
-		}
-		// Bit 3 (LSB of nibble)
-		if i+3 < totalBits && isSet(i+3) {
-			val |= 1
-		}
-
-		hexStr.WriteString(fmt.Sprintf("%X", val))
+	if bitCount > 0 {
+		nibble <<= (4 - bitCount)
+		hexStr.WriteString(fmt.Sprintf("%X", nibble))
 	}
+
 	return hexStr.String()
 }
 
@@ -315,6 +319,7 @@ func main() {
 	chunkSize := flag.Int64("chunk-size", 100000, "Number of programs per chunk")
 	championDB := flag.String("champion-db", "champions.db", "Path to champions SQLite database")
 	cacheSize := flag.Int("champion-cache-size", 1, "Number of tie submissions to cache per scope before flushing")
+	disableOptimizations := flag.Bool("disable-optimizations", false, "Disable symmetry/search-space reductions for debugging")
 	port := flag.String("port", "8080", "Server port")
 	flag.Parse()
 
@@ -343,7 +348,8 @@ func main() {
 		}}
 	}
 
-	coord := NewCoordinator(tasks, uint64(*chunkSize), store)
+	useSymmetry := !*disableOptimizations
+	coord := NewCoordinator(tasks, uint64(*chunkSize), useSymmetry, store)
 
 	go coord.Monitor()
 

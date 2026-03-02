@@ -63,3 +63,10 @@ distributed/nodes.json
 *.db
 *.db-*
 champion.json
+
+# Documentation files (not committed)
+**/IMPLEMENTATION_*.md
+**/NOTES*.md
+**/TODO*.md
+**/*_NOTES.md
+**/*_DOCUMENTATION.md

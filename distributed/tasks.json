@@ -1,5 +1,4 @@
 [
     {"width": 5, "height": 5, "n_active": 5, "max_gen": 1000},
-    {"width": 6, "height": 6, "n_active": 6, "max_gen": 2000},
-    {"width": 5, "height": 10, "n_active": 7, "max_gen": 1000}
+    {"width": 6, "height": 6, "n_active": 6, "max_gen": 2000}
 ]

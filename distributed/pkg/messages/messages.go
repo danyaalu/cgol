@@ -2,10 +2,11 @@ package messages
 
 // ConfigResponse is sent to workers on startup.
 type ConfigResponse struct {
-	Width   int `json:"width"`
-	Height  int `json:"height"`
-	NActive int `json:"n_active"`
-	MaxGen  int `json:"max_gen"`
+	Width       int  `json:"width"`
+	Height      int  `json:"height"`
+	NActive     int  `json:"n_active"`
+	MaxGen      int  `json:"max_gen"`
+	UseSymmetry bool `json:"use_symmetry"`
 }
 
 // TaskRequest is sent by a worker to ask for work.
@@ -15,13 +16,14 @@ type TaskRequest struct {
 
 // TaskResponse assigns a range of seeds to a worker.
 type TaskResponse struct {
-	StartSeed uint64 `json:"start_seed"`
-	EndSeed   uint64 `json:"end_seed"` // Exclusive
-	TaskID    string `json:"task_id"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	NActive   int    `json:"n_active"`
-	MaxGen    int    `json:"max_gen"`
+	StartSeed   uint64 `json:"start_seed"`
+	EndSeed     uint64 `json:"end_seed"` // Exclusive
+	TaskID      string `json:"task_id"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	NActive     int    `json:"n_active"`
+	MaxGen      int    `json:"max_gen"`
+	UseSymmetry bool   `json:"use_symmetry"`
 }
 
 // ResultSubmission is sent by a worker when it finds a candidate.

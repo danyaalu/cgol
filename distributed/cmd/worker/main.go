@@ -20,12 +20,13 @@ import (
 )
 
 type Worker struct {
-	serverURL string
-	width     int
-	height    int
-	nActive   int
-	maxGen    int
-	workerID  string
+	serverURL   string
+	width       int
+	height      int
+	nActive     int
+	maxGen      int
+	workerID    string
+	useSymmetry bool
 }
 
 func (w *Worker) fetchConfig() error {
@@ -43,6 +44,7 @@ func (w *Worker) fetchConfig() error {
 	w.height = config.Height
 	w.nActive = config.NActive
 	w.maxGen = config.MaxGen
+	w.useSymmetry = config.UseSymmetry
 	return nil
 }
 
@@ -88,12 +90,14 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 	height := task.Height
 	nActive := task.NActive
 	maxGen := task.MaxGen
+	useSymmetry := task.UseSymmetry
 
 	if width == 0 {
 		width = w.width
 		height = w.height
 		nActive = w.nActive
 		maxGen = w.maxGen
+		useSymmetry = w.useSymmetry
 	}
 
 	// Metrics: track patterns skipped due to symmetry
@@ -134,12 +138,13 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 
 					localProcessed++
 
-					// SYMMETRY CHECK: Skip non-canonical patterns
-					// This is the key optimization: only simulate patterns in canonical form
-					pattern := symmetry.NewPattern(width, height, indices)
-					if !pattern.IsCanonical() {
-						localSkipped++
-						continue
+					// Apply symmetry-based pruning only when requested by coordinator
+					if useSymmetry {
+						pattern := symmetry.NewPattern(width, height, indices)
+						if !pattern.IsCanonical() {
+							localSkipped++
+							continue
+						}
 					}
 
 					board := simulation.NewBoardFromPositions(width, height, indices)
@@ -182,11 +187,13 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 	wg.Wait()
 	close(results)
 
-	// Report symmetry reduction statistics
-	if totalProcessed > 0 {
+	// Report symmetry reduction statistics when enabled
+	if useSymmetry && totalProcessed > 0 {
 		reductionPct := float64(skippedSymmetry) / float64(totalProcessed) * 100
 		fmt.Printf("Symmetry Filter: %d/%d patterns skipped (%.1f%% reduction)\n",
 			skippedSymmetry, totalProcessed, reductionPct)
+	} else if !useSymmetry {
+		fmt.Println("Symmetry optimization disabled by coordinator; simulated full search space for this batch.")
 	}
 
 	var bestResult messages.ResultSubmission
@@ -197,50 +204,50 @@ func (w *Worker) processTask(task *messages.TaskResponse, numThreads int) {
 	}
 
 	if bestResult.Generations > 0 {
-		bestResult.Hex = w.encodeHex(bestResult.Seed)
+		bestResult.Hex = encodeHex(bestResult.Seed, width, height, nActive)
 		fmt.Printf("Batch Best: Seed %d, Gens %d\n", bestResult.Seed, bestResult.Generations)
 		w.submitResult(bestResult)
 	}
 }
 
-func (w *Worker) encodeHex(seedIndex uint64) string {
-	// Convert index to actual positions
-	indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(seedIndex), w.width*w.height, w.nActive)
+func encodeHex(seedIndex uint64, width, height, nActive int) string {
+	// Build a presence map for row-major positions (y * width + x)
+	indices := combinatorics.IndexToCombination(new(big.Int).SetUint64(seedIndex), width*height, nActive)
+	set := make(map[int]struct{}, len(indices))
+	for _, idx := range indices {
+		set[idx] = struct{}{}
+	}
 
-	totalBits := w.width * w.height
 	var hexStr strings.Builder
+	var nibble byte
+	bitCount := 0
 
-	// Helper to check if bit 'pos' is set
-	isSet := func(pos int) bool {
-		for _, idx := range indices {
-			if idx == pos {
-				return true
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			pos := y*width + x
+			_, on := set[pos]
+			bit := byte(0)
+			if on {
+				bit = 1
+			}
+
+			nibble = (nibble << 1) | bit
+			bitCount++
+
+			if bitCount == 4 {
+				hexStr.WriteString(fmt.Sprintf("%X", nibble))
+				nibble = 0
+				bitCount = 0
 			}
 		}
-		return false
 	}
 
-	for i := 0; i < totalBits; i += 4 {
-		var val byte
-		// Bit 0 (MSB of nibble)
-		if i < totalBits && isSet(i) {
-			val |= 8
-		}
-		// Bit 1
-		if i+1 < totalBits && isSet(i+1) {
-			val |= 4
-		}
-		// Bit 2
-		if i+2 < totalBits && isSet(i+2) {
-			val |= 2
-		}
-		// Bit 3 (LSB of nibble)
-		if i+3 < totalBits && isSet(i+3) {
-			val |= 1
-		}
-
-		hexStr.WriteString(fmt.Sprintf("%X", val))
+	// Pad remaining bits (if any) with zeros on the right
+	if bitCount > 0 {
+		nibble <<= (4 - bitCount)
+		hexStr.WriteString(fmt.Sprintf("%X", nibble))
 	}
+
 	return hexStr.String()
 }
 
