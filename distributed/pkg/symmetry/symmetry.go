@@ -213,15 +213,33 @@ func compareLexicographic(p1, p2 *Pattern) int {
 	return 0
 }
 
-// CanonicalForm returns the lexicographically smallest symmetry of the pattern.
-// This is used as the canonical representative for symmetry equivalence classes.
+// CanonicalForm returns the lexicographically smallest symmetry of the pattern
+// among those that preserve the original grid dimensions.
+//
+// For square grids (Width == Height), all 8 symmetries are considered, giving
+// up to 8x search-space reduction. For rectangular grids (Width != Height),
+// only the 4 dimension-preserving symmetries are considered (identity, 180°
+// rotation, horizontal flip, and flip+180°), giving up to 4x reduction.
+//
+// Cross-dimension symmetries (90°/270° rotations on non-square grids) are
+// intentionally excluded. They belong to a different search space (H×W rather
+// than W×H) and must not influence canonical selection within the W×H search.
+// Including them would cause all patterns in any W > H grid to be deemed
+// non-canonical (their H×W rotation always has a smaller Width), silently
+// skipping the entire search space.
 func (p *Pattern) CanonicalForm() *Pattern {
 	symmetries := p.AllSymmetries()
-	canonical := symmetries[0]
+	canonical := p
 
-	for i := 1; i < len(symmetries); i++ {
-		if compareLexicographic(symmetries[i], canonical) < 0 {
-			canonical = symmetries[i]
+	for _, sym := range symmetries {
+		// Only compare symmetries that stay within the same W×H grid.
+		// Rotations on non-square grids produce H×W patterns, which are
+		// not part of the current search space.
+		if sym.Width != p.Width || sym.Height != p.Height {
+			continue
+		}
+		if compareLexicographic(sym, canonical) < 0 {
+			canonical = sym
 		}
 	}
 

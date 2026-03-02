@@ -243,11 +243,23 @@ func TestRectangularGrid(t *testing.T) {
 	symmetries := p.AllSymmetries()
 	canonical := p.CanonicalForm()
 
-	// Verify all symmetries have same canonical
+	// Verify that same-dimension symmetries share one canonical form.
+	// Cross-dimension symmetries (90°/270° rotations that produce a 3×2
+	// pattern) belong to a different search space and intentionally have
+	// their own independent canonical form within that 3×2 space.
 	for i, sym := range symmetries {
+		if sym.Width != p.Width || sym.Height != p.Height {
+			// Confirm this cross-dimension symmetry has its own canonical
+			// that is self-consistent (canonical of canonical == itself).
+			symCanonical := sym.CanonicalForm()
+			if !symCanonical.IsCanonical() {
+				t.Errorf("Rectangular: cross-dim symmetry %d canonical is not self-canonical", i)
+			}
+			continue
+		}
 		symCanonical := sym.CanonicalForm()
 		if !canonical.Equal(symCanonical) {
-			t.Errorf("Rectangular: symmetry %d has different canonical: got %v (dims %dx%d), want %v (dims %dx%d)",
+			t.Errorf("Rectangular: same-dim symmetry %d has different canonical: got %v (dims %dx%d), want %v (dims %dx%d)",
 				i, symCanonical.Cells, symCanonical.Width, symCanonical.Height,
 				canonical.Cells, canonical.Width, canonical.Height)
 		}
@@ -258,6 +270,48 @@ func TestRectangularGrid(t *testing.T) {
 	if r90.Width != p.Height || r90.Height != p.Width {
 		t.Errorf("After 90° rotation, dimensions should swap: got %dx%d, want %dx%d",
 			r90.Width, r90.Height, p.Height, p.Width)
+	}
+}
+
+// TestRectangularGridWiderThanTall verifies that W > H grids are not silently skipped.
+// Previously a bug caused CanonicalForm() to always return a cross-dimension (H×W)
+// pattern for any W×H pattern with W > H, making IsCanonical() return false for
+// every pattern in the search space — zero simulations, zero results.
+func TestRectangularGridWiderThanTall(t *testing.T) {
+	// 3x2 grid (width > height)
+	p := NewPattern(3, 2, []int{0, 2, 4})
+
+	// The canonical form MUST have the same dimensions as the original pattern.
+	canonical := p.CanonicalForm()
+	if canonical.Width != p.Width || canonical.Height != p.Height {
+		t.Errorf("W>H canonical form has wrong dimensions: got %dx%d, want %dx%d",
+			canonical.Width, canonical.Height, p.Width, p.Height)
+	}
+
+	// At least one pattern in this grid must be canonical (otherwise the
+	// entire W > H search space would be silently skipped).
+	symmetries := p.AllSymmetries()
+	anyCanonical := false
+	for _, sym := range symmetries {
+		if sym.Width == p.Width && sym.Height == p.Height && sym.IsCanonical() {
+			anyCanonical = true
+			break
+		}
+	}
+	if !anyCanonical {
+		t.Errorf("W>H grid: no same-dimension symmetry is canonical — entire search space would be skipped")
+	}
+
+	// Same-dimension symmetries must agree on the same canonical form.
+	for i, sym := range symmetries {
+		if sym.Width != p.Width || sym.Height != p.Height {
+			continue
+		}
+		symCanonical := sym.CanonicalForm()
+		if !canonical.Equal(symCanonical) {
+			t.Errorf("W>H rectangular: same-dim symmetry %d has different canonical: got %v, want %v",
+				i, symCanonical.Cells, canonical.Cells)
+		}
 	}
 }
 

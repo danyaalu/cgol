@@ -226,11 +226,16 @@ func (s *ChampionStore) handleSubmit(candidate Candidate) SubmitResult {
 	const maxProgramsPerTask = 5000
 
 	if count < maxProgramsPerTask {
-		// We have room, just insert
+		// Under capacity: insert all non-duplicate extinction results.
+		// Filtering here would risk silently discarding the true champion
+		// when a weaker out-of-order batch submission has already set `best`.
+		// The at-capacity eviction path below is the right place to enforce
+		// quality — it only evicts the current worst when a strictly better
+		// result arrives.
 		if err := s.insertCandidate(scope, candidate.GenCount, candidate.Program); err != nil {
 			return SubmitResult{Err: err}
 		}
-		if candidate.GenCount > best {
+		if candidate.GenCount > best || best == noBest {
 			s.best[scope] = candidate.GenCount
 			return SubmitResult{Outcome: OutcomeInsertedNewBest, BestGen: candidate.GenCount}
 		}
