@@ -232,6 +232,7 @@ func (p *Pattern) CanonicalForm() *Pattern {
 	canonical := p
 
 	for _, sym := range symmetries {
+		z
 		// Only compare symmetries that stay within the same W×H grid.
 		// Rotations on non-square grids produce H×W patterns, which are
 		// not part of the current search space.
