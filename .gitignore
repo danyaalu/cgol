@@ -46,3 +46,27 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Binaries
+**/bin/
+coordinator
+distributed/coordinator
+
+# Go
+go.sum
+
+# Distributed champion data
+distributed/champion.json
+distributed/nodes.json
+
+# Storage files
+*.db
+*.db-*
+champion.json
+
+# Documentation files (not committed)
+**/IMPLEMENTATION_*.md
+**/NOTES*.md
+**/TODO*.md
+**/*_NOTES.md
+**/*_DOCUMENTATION.md

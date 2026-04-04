@@ -1,0 +1,57 @@
+Conway's Game of Life - Symmetry Optimization Validation
+=========================================================
+Task: 5x5 grid, 5 active cells, max 2000 generations
+Testing EXTINCTION-only busy beaver search
+
+=== Running 5x5 n=5 (Symmetry: false) ===
+Total patterns to test: 53130
+Progress: 26.37% | Processed: 14012 | Skipped: 0 | Best: 8 gens | Speed: 14007 PPS
+Progress: 62.93% | Processed: 33437 | Skipped: 0 | Best: 8 gens | Speed: 16713 PPS
+
+=== Results (Symmetry: false) ===
+Total seeds: 53130
+Processed: 53130
+Skipped: 0 (0.00%)
+Time: 3.000192844s
+Speed: 17709 PPS
+Best generations: 8
+Champions found: 456
+
+=== Running 5x5 n=5 (Symmetry: true) ===
+Total patterns to test: 53130
+
+=== Results (Symmetry: true) ===
+Total seeds: 53130
+Processed: 6814
+Skipped: 46316 (87.17%)
+Time: 811.576416ms
+Speed: 8396 PPS
+Best generations: 8
+Champions found: 57
+
+=== COMPARISON ===
+Champions without symmetry: 456
+Champions with symmetry: 57
+
+Generation count breakdown:
+  8 gens: 456 champions (no symmetry) -> 57 champions (with symmetry)
+
+=== Verifying BEST OUTCOME PRESERVED ===
+  ✅ Best generation count: 8 (same in both runs)
+
+=== Verifying UNIQUE OUTCOME GROUPS ===
+  Without symmetry: 456 champions = 57 unique symmetry classes
+  With symmetry: 57 champions selected
+  ✅ All 57 unique outcome groups have representatives
+
+=== Sample Equivalence Class ===
+Canonical form: [0 2 7 8 19]
+  Contains 8 symmetrically equivalent patterns:
+    Seed 3066 -> 8 gens
+    Seed 11734 -> 8 gens
+    Seed 15972 -> 8 gens
+  ... and 5 more
+
+Champion reduction: 87.50% (from 456 to 57)
+
+=== VALIDATION COMPLETE ===
